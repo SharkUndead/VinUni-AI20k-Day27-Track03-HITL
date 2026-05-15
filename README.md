@@ -69,7 +69,11 @@ Every node also writes one row to `audit_events`. The graph state is persisted b
 | 58–72%      | `human_approval` | Yes — approve / reject / edit      | PR-Demo #1 |
 | < 58%       | `escalate`       | Yes — answer specific questions    | PR-Demo #2 |
 
-Thresholds live in `common/schemas.py` (`AUTO_APPROVE_THRESHOLD = 0.73`, `ESCALATE_THRESHOLD = 0.58`).
+Thresholds live in `common/schemas.py`. This submitted version uses a lab-calibrated
+auto-approve threshold (`AUTO_APPROVE_THRESHOLD = 0.90`) so the demo can exercise HITL
+even when the hosted model reports high confidence. Escalation still uses the original
+low-confidence threshold (`ESCALATE_THRESHOLD = 0.58`) plus route heuristics for security
+signals such as MD5/password/token handling, SQL construction, auth, and cloud sync.
 
 ## Layout
 

@@ -1,5 +1,4 @@
-"""Shared types: the graph state, the LLM's structured analysis output,
-and the structured audit-trail entry written to PostgreSQL."""
+"""Shared types: graph state, structured PR analysis, and audit entries."""
 
 from __future__ import annotations
 
@@ -13,17 +12,16 @@ Decision = Literal["auto_approve", "human_approval", "escalate"]
 HumanChoice = Literal["approve", "reject", "edit"]
 
 
-# Confidence thresholds
-AUTO_APPROVE_THRESHOLD = 0.73   # >= 73% → no human, agent commits the comment directly
-ESCALATE_THRESHOLD = 0.58       # < 58% → escalate: agent asks the reviewer specific questions
-# 58–72% inclusive → human approval flow (reviewer clicks Approve / Reject / Edit)
+# Lab-calibrated thresholds. AUTO_APPROVE is high so the demo can exercise HITL
+# even when hosted models over-report confidence on simple PRs. ESCALATE stays
+# near the original handout value; high-risk security PRs are also caught by the
+# route heuristics in the exercise graph nodes.
+AUTO_APPROVE_THRESHOLD = 0.90
+ESCALATE_THRESHOLD = 0.58
 
 
 def risk_level_for(confidence: float) -> str:
-    """Map confidence → risk_level (used in AuditEntry).
-
-    The thresholds invert: higher confidence ↔ lower risk.
-    """
+    """Map confidence to risk_level for AuditEntry."""
     if confidence >= AUTO_APPROVE_THRESHOLD:
         return "low"
     if confidence < ESCALATE_THRESHOLD:
@@ -47,12 +45,11 @@ class PRAnalysis(BaseModel):
     risk_factors: list[str] = Field(default_factory=list)
     comments: list[ReviewComment] = Field(default_factory=list)
     confidence: float = Field(
-        ge=0.0, le=1.0,
+        ge=0.0,
+        le=1.0,
         description="Self-reported confidence that the review is complete and correct",
     )
-    confidence_reasoning: str = Field(
-        description="Why the model picked that confidence value"
-    )
+    confidence_reasoning: str = Field(description="Why the model picked that confidence value")
     escalation_questions: list[str] = Field(
         default_factory=list,
         description="Specific questions to ask a human reviewer if escalating",
@@ -60,48 +57,35 @@ class PRAnalysis(BaseModel):
 
 
 class AuditEntry(BaseModel):
-    """One row of the PostgreSQL audit trail.
-
-    Designed as a structured *decision log* — one entry per meaningful event
-    in a review session (LLM analysis, HITL interrupt, reviewer response,
-    final commit). The fields are first-class SQL columns so auditors can
-    query directly (e.g. ``SELECT AVG(confidence) WHERE decision = 'approve'``).
-    """
+    """One row of the structured audit trail."""
 
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="When the event was recorded (UTC).",
     )
-    agent_id: str = Field(
-        description="Identifier of the agent that produced the event "
-                    "(e.g. 'pr-review-agent@v0.1')."
-    )
+    agent_id: str = Field(description="Identifier of the agent that produced the event.")
     action: str = Field(
-        description="What the agent did at this step — "
-                    "'fetch_pr' | 'analyze' | 'route' | 'human_approval' | "
-                    "'escalate' | 'synthesize' | 'commit'."
+        description="What the agent did at this step: fetch_pr, analyze, route, "
+        "human_approval, escalate, synthesize, commit."
     )
     confidence: float = Field(
-        ge=0.0, le=1.0,
-        description="Current confidence at this step (mirrors PRAnalysis.confidence).",
+        ge=0.0,
+        le=1.0,
+        description="Current confidence at this step.",
     )
     risk_level: str = Field(
-        description="Derived from confidence — 'low' / 'med' / 'high'. "
-                    "Use risk_level_for(confidence) to compute.",
+        description="Derived from confidence: low, med, or high. Use risk_level_for()."
     )
     reviewer_id: str | None = Field(
         default=None,
-        description="GitHub username of the human reviewer for HITL events. "
-                    "None for fully automated steps.",
+        description="GitHub username of the human reviewer for HITL events.",
     )
     decision: str = Field(
-        description="Outcome at this step — "
-                    "'auto' | 'approve' | 'reject' | 'edit' | 'escalate' | 'pending'.",
+        description="Outcome at this step: auto, approve, reject, edit, escalate, or pending."
     )
     reason: str | None = Field(
         default=None,
-        description="Free-text explanation: confidence_reasoning for analyze, "
-                    "human_feedback for HITL, etc.",
+        description="Free-text explanation: confidence reasoning, human feedback, etc.",
     )
     execution_time_ms: int = Field(
         ge=0,
@@ -110,7 +94,7 @@ class AuditEntry(BaseModel):
 
 
 class ReviewState(TypedDict, total=False):
-    """LangGraph state — every node reads and updates this dict."""
+    """LangGraph state: every node reads and updates this dict."""
 
     # Inputs
     pr_url: str
@@ -134,6 +118,6 @@ class ReviewState(TypedDict, total=False):
     human_feedback: str | None
     escalation_answers: dict[str, str] | None
 
-    # Populated by commit / final nodes
+    # Populated by commit/final nodes
     posted_comment_body: str | None
     final_action: str | None
